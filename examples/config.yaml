@@ -1,0 +1,43 @@
+# Example ~/.whiz/config.yaml
+
+profiles:
+  balanced:
+    backend: openai
+    model: gpt-4o
+    sub_model: null
+    recursion:
+      max_depth: 5
+      max_repl_rounds: 100
+    environment: local
+
+  fast:
+    backend: ollama
+    model: llama3
+    sub_model: ollama/llama3
+    recursion:
+      max_depth: 3
+      max_repl_rounds: 50
+    environment: local
+
+  powerful:
+    backend: openrouter
+    model: openrouter/auto
+    sub_model: null
+    recursion:
+      max_depth: 10
+      max_repl_rounds: 200
+    environment: local
+
+  docker:
+    backend: openai
+    model: gpt-4o
+    recursion:
+      max_depth: 5
+    environment: docker
+
+# Active profile (override with --profile flag)
+active_profile: balanced
+
+logging:
+  dir: ~/.whiz/logs
+  level: info
