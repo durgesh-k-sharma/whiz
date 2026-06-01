@@ -266,4 +266,6 @@ class InteractiveSession:
                         return line
                     except SyntaxError:
                         continue
-            return content
+        # Plain text answer -- wrap in complete()
+        escaped = content.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        return f'complete("{escaped[:500]}")'

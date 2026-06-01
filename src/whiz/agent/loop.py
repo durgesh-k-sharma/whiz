@@ -44,27 +44,25 @@ class SubLLMManager:
             self._depth -= 1
 
 
-SYSTEM_PROMPT = """You are Whiz, an AI coding agent with access to a Python REPL environment.
+SYSTEM_PROMPT = """You are Whiz, a coding agent with a Python REPL.
 
-You can write arbitrary Python code to explore and manipulate the codebase. All your code runs in a persistent Python REPL where variables you define are remembered across turns.
+RULE: ALWAYS call complete(your_answer) when done. If the task is simple, just call complete() directly.
 
-Available tools (already imported and ready to use as Python variables):
-- search(query: str) -> str — Search the codebase for a pattern. Returns matching file paths and lines.
-- read_files(paths: list[str]) -> str — Read the contents of one or more files.
-- edit_file(path: str, content: str) -> str — Write content to a file. Creates the file if it doesn't exist.
-- run_tests(command: str | None = None) -> str — Run tests in the project. Auto-detects pytest if no command given.
-- sub_llm(prompt: str, context: str = "") -> str — Spawn a sub-LLM to handle a sub-task. Returns the sub-LLM's response.
-- complete(value) — Signal that you are done. The session will end and value will be returned.
+Tools available as Python variables:
+- search(query) — grep the codebase
+- read_files([paths]) — read file contents
+- edit_file(path, content) — write a file
+- run_tests([cmd]) — run pytest
+- sub_llm(prompt, context="") — spawn child LLM
+- complete(value) — END the session and return value
 
-Standard library modules are available: os, sys, json, re, math, pathlib, subprocess, etc.
+Variables already set: file_tree, readme, project_root, user_prompt
 
-The codebase has been indexed for you. The following variables are already in your REPL:
-- file_tree — A tree listing of the project files
-- readme — The project README (truncated if long)
-- project_root — Absolute path to the project root
+Write Python code. End every response with complete(result)."""
 
-Write Python code to accomplish the task. When done, call complete(your_answer).
-"""
+COMPLETE_FALLBACK_PROMPT = """You are Whiz. Given this REPL history, the task is complete.
+
+Write: complete("<your final answer here>")"""
 
 
 @dataclass
@@ -289,7 +287,11 @@ class Orchestrator:
         return messages
 
     def _extract_code(self, content: str) -> str | None:
-        """Extract executable Python code from the LLM response."""
+        """Extract executable Python code from the LLM response.
+
+        If the response is plain text (not valid Python), wrap it in complete()
+        so the session terminates with the model's answer.
+        """
         content = content.strip()
         if not content:
             return None
@@ -310,23 +312,26 @@ class Orchestrator:
                 elif in_block:
                     block_lines.append(line)
             if blocks:
-                # Return the last code block
                 return blocks[-1].strip()
 
-        # No code blocks -- treat the whole response as code
-        # But filter out plain English explanations
+        # Check if the whole response is valid Python
         try:
             compile(content, "<llm>", "exec")
             return content
         except SyntaxError:
-            # Not valid Python -- try to find a Python-like line
-            for line in content.split("\n"):
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    try:
-                        compile(line, "<llm>", "exec")
-                        return line
-                    except SyntaxError:
-                        continue
-            # Last resort: return the content as-is, REPL will handle the error
-            return content
+            pass
+
+        # Try to find a Python-like line
+        for line in content.split("\n"):
+            line = line.strip()
+            if line and not line.startswith("#"):
+                try:
+                    compile(line, "<llm>", "exec")
+                    return line
+                except SyntaxError:
+                    continue
+
+        # Plain text answer -- wrap in complete() so the session ends
+        # Escape quotes in the answer
+        escaped = content.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        return f'complete("{escaped[:500]}")'
