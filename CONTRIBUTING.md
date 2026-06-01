@@ -5,25 +5,26 @@
 ```bash
 git clone https://github.com/durgesh-k-sharma/whiz.git
 cd whiz
-python -m venv .venv --python 3.12
+make venv
 source .venv/bin/activate
-pip install -e ".[test]"
 ```
 
 ## Running Tests
 
 ```bash
 # Run all unit tests
-pytest tests/unit/
+make test
+# or without activating venv:
+uv run pytest tests/unit/
 
 # Run with coverage
-pytest tests/unit/ --cov=whiz --cov-report=term-missing
+make test-cov
 
 # Run a specific test file
 pytest tests/unit/test_repl.py -v
 
 # Run E2E tests (requires API keys)
-OPENAI_API_KEY=sk-... pytest tests/ -m e2e
+OPENROUTER_API_KEY=sk-or-... pytest tests/ -m e2e
 ```
 
 ## Project Structure

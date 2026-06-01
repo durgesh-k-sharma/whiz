@@ -1,42 +1,57 @@
 # Example ~/.whiz/config.yaml
 
 profiles:
-  balanced:
-    backend: openai
-    model: gpt-4o
-    sub_model: null
-    recursion:
-      max_depth: 5
-      max_repl_rounds: 100
-    environment: local
-
-  fast:
-    backend: ollama
-    model: llama3
-    sub_model: ollama/llama3
+  # OpenRouter free tier (default)
+  or-free:
+    backend: openrouter
+    model: openrouter/free
+    sub_model: openrouter/free
     recursion:
       max_depth: 3
       max_repl_rounds: 50
     environment: local
 
-  powerful:
+  # Specific models via OpenRouter
+  or-claude:
     backend: openrouter
-    model: openrouter/auto
-    sub_model: null
-    recursion:
-      max_depth: 10
-      max_repl_rounds: 200
-    environment: local
-
-  docker:
-    backend: openai
-    model: gpt-4o
+    model: openrouter/anthropic/claude-sonnet-4
+    sub_model: openrouter/anthropic/claude-sonnet-4
     recursion:
       max_depth: 5
-    environment: docker
+      max_repl_rounds: 100
+    environment: local
+
+  or-gpt4o:
+    backend: openrouter
+    model: openrouter/openai/gpt-4o
+    sub_model: openrouter/openai/gpt-4o
+    recursion:
+      max_depth: 5
+      max_repl_rounds: 100
+    environment: local
+
+  # Let OpenRouter auto-select
+  or-auto:
+    backend: openrouter
+    model: openrouter/auto
+    sub_model: openrouter/auto
+    recursion:
+      max_depth: 5
+      max_repl_rounds: 100
+    environment: local
+
+  # Local Ollama (uncomment if running Ollama)
+  # ollama:
+  #   backend: ollama
+  #   model: llama3
+  #   sub_model: ollama/llama3
+  #   recursion:
+  #     max_depth: 3
+  #     max_repl_rounds: 50
+  #   environment: local
 
 # Active profile (override with --profile flag)
-active_profile: balanced
+active_profile: or-free
 
 logging:
   dir: ~/.whiz/logs

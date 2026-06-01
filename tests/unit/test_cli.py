@@ -58,7 +58,7 @@ class TestCLI:
         from whiz.models.openai import OpenAIModel
 
         mock_llm = MockLLM(responses=["complete('done')"])
-        with patch("whiz.cli._create_model", return_value=mock_llm):
+        with patch("whiz.cli._build_model", return_value=mock_llm):
             runner = CliRunner()
             result = runner.invoke(
                 main,

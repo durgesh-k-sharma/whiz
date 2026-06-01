@@ -26,12 +26,23 @@ Based on the research paper [Recursive Language Models](https://arxiv.org/abs/25
 pip install whiz
 ```
 
-Or install from source:
+Or install from source using [uv](https://docs.astral.sh/uv/) (recommended):
 
 ```bash
 git clone https://github.com/durgesh-k-sharma/whiz.git
 cd whiz
-pip install -e ".[test]"
+make venv
+source .venv/bin/activate
+```
+
+Or with vanilla Python:
+
+```bash
+git clone https://github.com/durgesh-k-sharma/whiz.git
+cd whiz
+python3 -m venv .venv --python 3.12
+source .venv/bin/activate
+uv pip install -e ".[test]"
 ```
 
 ## Quick Start
@@ -41,8 +52,16 @@ pip install -e ".[test]"
 Run a single task and exit:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
+export OPENROUTER_API_KEY="sk-or-..."
 whiz run "refactor the authentication module"
+```
+
+Switch profiles with `--profile`:
+
+```bash
+whiz run --profile or-free "quick task"     # OpenRouter free tier
+whiz run --profile or-claude "complex task" # Claude via OpenRouter
+whiz run run "summarize"                   # GPT-4o via OpenRouter
 ```
 
 ### Interactive mode
@@ -50,7 +69,7 @@ whiz run "refactor the authentication module"
 Start an interactive session where you can steer mid-execution:
 
 ```bash
-whiz interactive "explore the codebase andfind all TODOs"
+whiz interactive "explore the codebase and find all TODOs"
 ```
 
 ### Library API
@@ -80,38 +99,46 @@ Create a config file at `~/.whiz/config.yaml`:
 
 ```yaml
 profiles:
-  balanced:
-    backend: openai
-    model: gpt-4o
-    sub_model: null
+  or-free:
+    backend: openrouter
+    model: openrouter/free
+    sub_model: openrouter/free
+    recursion:
+      max_depth: 3
+      max_repl_rounds: 50
+    environment: local
+  or-claude:
+    backend: openrouter
+    model: openrouter/anthropic/claude-sonnet-4
+    sub_model: openrouter/anthropic/claude-sonnet-4
     recursion:
       max_depth: 5
       max_repl_rounds: 100
-    environment: local
-  fast:
-    backend: ollama
-    model: llama3
-    sub_model: ollama/llama3
+  or-gpt4o:
+    backend: openrouter
+    model: openrouter/openai/gpt-4o
     recursion:
-      max_depth: 3
-  powerful:
+      max_depth: 5
+      max_repl_rounds: 100
+  or-auto:
     backend: openrouter
     model: openrouter/auto
     recursion:
-      max_depth: 10
+      max_depth: 5
+      max_repl_rounds: 100
+  ollama:
+    backend: ollama
+    model: llama3
+    recursion:
+      max_depth: 3
+      max_repl_rounds: 50
 
-active_profile: balanced
+# Default profile (pass --profile to override)
+active_profile: or-free
 
 logging:
   dir: ~/.whiz/logs
   level: info
-```
-
-Set the active profile with `--profile`:
-
-```bash
-whiz --profile fast "quick task"
-whiz --profile powerful "complex analysis"
 ```
 
 ### Environment Variables
@@ -190,16 +217,20 @@ SessionResult(value, rounds, trajectory)
 ## Development
 
 ```bash
+# Setup (recommended)
+make venv
+source .venv/bin/activate
+
 # Run tests
 make test
 # or
-pytest tests/unit/
+uv run pytest tests/unit/
 
 # Run with coverage
-pytest tests/unit/ --cov=whiz --cov-report=term-missing
+make test-cov
 
-# Lint and format
-make check
+# Quick smoke test
+whiz run --profile or-free "say hello"
 ```
 
 ## Roadmap

@@ -3,27 +3,28 @@
 ## One-shot mode
 
 ```bash
-# Basic usage
-export OPENAI_API_KEY=sk-***
+# Basic usage with OpenRouter free tier
+export OPENROUTER_API_KEY="sk-or-..."
 whiz run "find all TODO comments in the codebase"
 
-# With profile
-whiz --profile powerful "analyze the architecture of this project"
-
-# Dry run (preview changes)
-whiz run --dry-run "refactor the auth module"
+# With specific profile
+whiz run --profile or-claude "analyze the architecture of this project"
+whiz run --profile or-gpt4o "summarize this code"
 
 # Auto-commit changes
 whiz run --auto-commit "add type hints to all functions"
+
+# Limit rounds for quick tasks
+whiz run --max-rounds 5 "what files handle routing?"
 ```
 
 ## Interactive mode
 
 ```bash
 # Start interactive session
-whiz interactive "explore thefind all unused imports"
+whiz interactive "explore the codebase and find all unused imports"
 
-# Mid-session steering: typefollow-up messages after # the agent starts working
+# Mid-session steering: type follow-up messages after the agent starts working
 # > focus on the src/ directory only
 # > stop
 ```
@@ -36,7 +37,7 @@ from whiz.models import OpenAIModel
 
 # Basic usage
 session = Session(
-    model=OpenAIModel(model="gpt-4o", api_key="sk-***"),
+    model=OpenAIModel(model="gpt-4o", key="..."),
     project_root="/path/to/project",
     verbose=True,
 )
@@ -46,17 +47,16 @@ print(f"Rounds: {result.rounds}")
 
 # With options
 result = Session(
-    model=OpenAIModel(model="gpt-4o", api_key="sk-***"),
+    model=OpenAIModel(model="gpt-4o", key="..."),
     max_rounds=50,
     max_recursion_depth=3,
-    dry_run=True,
 ).run("analyze all test files")
 
-# Async with steering
+# Async with steering support
 import asyncio
 
 async def main():
-    session = Session(model=OpenAIModel(model="gpt-4o", api_key="sk-***"))
+    session = Session(model=OpenAIModel(model="gpt-4o", key="..."))
     result = await session.arun("explore the codebase")
     print(result.value)
 
@@ -68,13 +68,28 @@ asyncio.run(main())
 ```yaml
 # ~/.whiz/config.yaml
 profiles:
-  local:
+  ollama:
     backend: ollama
     model: llama3
-    sub_model: ollama/llama3
-active_profile: local
+    recursion:
+      max_depth: 3
+      max_repl_rounds: 50
+active_profile: ollama
 ```
 
 ```bash
 whiz run "summarize the project structure"
+```
+
+## Using OpenRouter
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+
+# Free tier (default profile)
+whiz run "your task"
+
+# Specific model via OpenRouter
+whiz run --profile or-claude "complex reasoning task"
+whiz run --profile or-gpt4o "another task"
 ```
