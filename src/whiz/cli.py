@@ -1,6 +1,33 @@
 import click
+import os
+import sys
+from pathlib import Path
 
 from whiz.config import load_config, resolve_profile
+from whiz.agent.loop import Orchestrator
+
+
+def _create_model(profile):
+    """Create a model backend from a resolved profile."""
+    backend = profile.backend
+    model_name = profile.model
+
+    if backend == "openai":
+        from whiz.models.openai import OpenAIModel
+        return OpenAIModel(model=model_name)
+    elif backend == "anthropic":
+        raise RuntimeError("Anthropic backend not yet implemented")
+    elif backend == "openrouter":
+        from whiz.models.openai import OpenAIModel
+        return OpenAIModel(
+            model=model_name.replace("openrouter/", ""),
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.environ.get("OPENROUTER_API_KEY", os.environ.get("OPENAI_API_KEY", "")),
+        )
+    elif backend == "ollama":
+        raise RuntimeError("Ollama backend not yet implemented")
+    else:
+        raise RuntimeError(f"Unknown backend: {backend}")
 
 
 @click.group(invoke_without_command=True)
@@ -22,7 +49,6 @@ def main(ctx, profile, verbose, quiet, dry_run):
     ctx.obj["config"] = config
     ctx.obj["active_profile"] = active
 
-    # If no subcommand, enter interactive mode
     if ctx.invoked_subcommand is None:
         click.echo(f"Whiz v0.1.0 [{active.name}]")
         click.echo("Interactive mode not yet implemented. Use 'whiz run <prompt>'.")
@@ -34,10 +60,34 @@ def main(ctx, profile, verbose, quiet, dry_run):
 @click.option("--verbose", is_flag=True, default=False, help="Verbose output")
 @click.option("--quiet", is_flag=True, default=False, help="Suppress output")
 @click.option("--dry-run", is_flag=True, default=False, help="Preview changes without applying")
-def run(prompt, profile, verbose, quiet, dry_run):
+@click.option("--max-rounds", default=None, type=int, help="Max REPL rounds")
+def run(prompt, profile, verbose, quiet, dry_run, max_rounds):
     """Run a one-shot task."""
     config = load_config()
     active = resolve_profile(config, profile_flag=profile)
-    click.echo(f"Profile: {active.name} ({active.backend}/{active.model})")
-    click.echo(f"Prompt: {prompt}")
-    click.echo("One-shot mode not yet implemented.")
+
+    try:
+        model = _create_model(active)
+    except RuntimeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    effective_max_rounds = max_rounds or active.max_repl_rounds
+
+    orch = Orchestrator(
+        model=model,
+        project_root=click.get_current_context().obj.get("project_root") or Path.cwd(),
+        max_rounds=effective_max_rounds,
+        verbose=verbose,
+    )
+
+    result = orch.run(prompt)
+
+    if not quiet:
+        if result.success:
+            click.echo(f"\nResult: {result.value}")
+        else:
+            click.echo(f"\nFailed: {result.error}", err=True)
+        click.echo(f"Rounds: {result.rounds}")
+
+    sys.exit(0 if result.success else 1)
