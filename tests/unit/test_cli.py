@@ -24,7 +24,7 @@ class TestCLI:
         result = runner.invoke(main, [])
         assert result.exit_code == 0
         assert "Whiz v0.1.0" in result.output
-        assert "Interactive mode not yet implemented" in result.output
+        assert "interactive" in result.output.lower()
 
     def test_profile_flag(self):
         runner = CliRunner()

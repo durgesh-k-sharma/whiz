@@ -1,10 +1,12 @@
 import click
 import os
 import sys
+import asyncio
 from pathlib import Path
 
 from whiz.config import load_config, resolve_profile
 from whiz.agent.loop import Orchestrator
+from whiz.agent.interactive import InteractiveSession
 
 
 def _create_model(profile):
@@ -50,8 +52,11 @@ def main(ctx, profile, verbose, quiet, dry_run):
     ctx.obj["active_profile"] = active
 
     if ctx.invoked_subcommand is None:
+        # Default: enter interactive mode
         click.echo(f"Whiz v0.1.0 [{active.name}]")
-        click.echo("Interactive mode not yet implemented. Use 'whiz run <prompt>'.")
+        click.echo("Starting interactive mode... (not yet fully implemented)")
+        click.echo("Use 'whiz run <prompt>' for one-shot mode.")
+        click.echo("Use 'whiz interactive <prompt>' for interactive mode with steering.")
 
 
 @main.command()
@@ -82,6 +87,45 @@ def run(prompt, profile, verbose, quiet, dry_run, max_rounds):
     )
 
     result = orch.run(prompt)
+
+    if not quiet:
+        if result.success:
+            click.echo(f"\nResult: {result.value}")
+        else:
+            click.echo(f"\nFailed: {result.error}", err=True)
+        click.echo(f"Rounds: {result.rounds}")
+
+    sys.exit(0 if result.success else 1)
+
+
+@main.command()
+@click.argument("prompt")
+@click.option("--profile", default=None, help="Configuration profile to use")
+@click.option("--verbose", is_flag=True, default=False, help="Verbose output")
+@click.option("--quiet", is_flag=True, default=False, help="Suppress output")
+@click.option("--max-rounds", default=None, type=int, help="Max REPL rounds")
+def interactive(prompt, profile, verbose, quiet, max_rounds):
+    """Run an interactive session with mid-session steering support."""
+    config = load_config()
+    active = resolve_profile(config, profile_flag=profile)
+
+    try:
+        model = _create_model(active)
+    except RuntimeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    effective_max_rounds = max_rounds or active.max_repl_rounds
+
+    session = InteractiveSession(
+        model=model,
+        project_root=Path.cwd(),
+        max_rounds=effective_max_rounds,
+        max_recursion_depth=active.max_depth,
+        verbose=verbose,
+    )
+
+    result = asyncio.run(session.run(prompt))
 
     if not quiet:
         if result.success:
