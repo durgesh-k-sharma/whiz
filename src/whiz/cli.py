@@ -16,18 +16,25 @@ def _create_model(profile):
 
     if backend == "openai":
         from whiz.models.openai import OpenAIModel
-        return OpenAIModel(model=model_name)
+        return OpenAIModel(model=model_name, api_key=profile.api_key or None)
     elif backend == "anthropic":
-        raise RuntimeError("Anthropic backend not yet implemented")
+        try:
+            from whiz.models.anthropic import AnthropicModel
+            return AnthropicModel(model=model_name, api_key=profile.api_key or None)
+        except RuntimeError:
+            # Fallback: use OpenAI-compatible interface if anthropic not installed
+            from whiz.models.openai import OpenAIModel
+            return OpenAIModel(model=model_name, api_key=profile.api_key or None)
     elif backend == "openrouter":
         from whiz.models.openai import OpenAIModel
         return OpenAIModel(
             model=model_name.replace("openrouter/", ""),
             base_url="https://openrouter.ai/api/v1",
-            api_key=os.environ.get("OPENROUTER_API_KEY", os.environ.get("OPENAI_API_KEY", "")),
+            api_key=profile.api_key or os.environ.get("OPENROUTER_API_KEY", ""),
         )
     elif backend == "ollama":
-        raise RuntimeError("Ollama backend not yet implemented")
+        from whiz.models.ollama import OllamaModel
+        return OllamaModel(model=model_name)
     else:
         raise RuntimeError(f"Unknown backend: {backend}")
 

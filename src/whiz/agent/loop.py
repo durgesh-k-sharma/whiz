@@ -98,6 +98,8 @@ class Orchestrator:
         max_recursion_depth: int = 5,
         sub_model: str | None = None,
         compaction_threshold: int = 4000,
+        dry_run: bool = False,
+        auto_commit: bool = False,
     ):
         self.model = model
         self.project_root = Path(project_root).resolve()
@@ -108,6 +110,8 @@ class Orchestrator:
         self.max_recursion_depth = max_recursion_depth
         self.sub_model = sub_model
         self.compaction_threshold = compaction_threshold
+        self.dry_run = dry_run
+        self.auto_commit = auto_commit
         self._trajectory: list[SessionEvent] = []
         self._recursion_mgr = SubLLMManager(max_depth=max_recursion_depth)
 
@@ -170,11 +174,16 @@ class Orchestrator:
             else:
                 logger.log(round_num, "output", output, verbose_only=True)
 
-            # Check if complete was called
+            # Check for completion
             ns = repl.get_namespace()
             if "_done" in ns:
                 value = ns.get("_done_value")
                 logger.log(round_num, "complete", str(value))
+
+                # Auto-commit: create git commit after session
+                if self.auto_commit:
+                    self._auto_commit(value)
+
                 logger.save()
                 return SessionResult(
                     success=True,
@@ -192,6 +201,36 @@ class Orchestrator:
             trajectory=list(self._trajectory),
             error=f"Max rounds ({self.max_rounds}) exceeded without completion",
         )
+
+    def _auto_commit(self, value: Any) -> None:
+        """Create a git commit with an LLM-generated message."""
+        import subprocess
+        try:
+            # Stage all changes
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=str(self.project_root),
+                capture_output=True,
+                timeout=30,
+            )
+            # Generate commit message
+            try:
+                msg_response = self.model.chat_completion(
+                    messages=[{"role": "user", "content": f"Generate a concise git commit message (under 72 chars) for a session that produced: {value}"}],
+                    model="",
+                )
+                commit_msg = msg_response.content.strip()
+            except Exception:
+                commit_msg = f"Whiz session: {str(value)[:60]}"
+
+            subprocess.run(
+                ["git", "commit", "-m", commit_msg],
+                cwd=str(self.project_root),
+                capture_output=True,
+                timeout=30,
+            )
+        except Exception:
+            pass  # Auto-commit is best-effort
 
     def _inject_context(self, repl: LocalREPL, index: CodebaseIndex, prompt: str) -> None:
         """Inject codebase context and user prompt into the REPL."""
