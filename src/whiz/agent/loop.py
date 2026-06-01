@@ -13,6 +13,7 @@ from whiz.tools.search import SearchTool
 from whiz.tools.filesystem import ReadFilesTool, EditFileTool, RunTestsTool
 from whiz.logging.trajectory import TrajectoryLogger
 from whiz.agent.recursion import create_sub_llm_callable
+from whiz.agent.compaction import Compactor, CompactionTrigger
 
 
 class RecursionError(Exception):
@@ -96,6 +97,7 @@ class Orchestrator:
         log_dir: Path | None = None,
         max_recursion_depth: int = 5,
         sub_model: str | None = None,
+        compaction_threshold: int = 4000,
     ):
         self.model = model
         self.project_root = Path(project_root).resolve()
@@ -105,6 +107,7 @@ class Orchestrator:
         self.log_dir = log_dir
         self.max_recursion_depth = max_recursion_depth
         self.sub_model = sub_model
+        self.compaction_threshold = compaction_threshold
         self._trajectory: list[SessionEvent] = []
         self._recursion_mgr = SubLLMManager(max_depth=max_recursion_depth)
 
@@ -121,8 +124,17 @@ class Orchestrator:
         self._inject_context(repl, index, prompt)
         self._inject_tools(repl)
 
+        # Create compaction infrastructure
+        compaction_trigger = CompactionTrigger(threshold=self.compaction_threshold)
+        compactor = Compactor(model=self.model)
+
         # Inner loop
         for round_num in range(1, self.max_rounds + 1):
+            # Check if compaction is needed before this round
+            if compaction_trigger.should_compact(repl):
+                compactor.compact(repl)
+                logger.log(round_num, "compaction", "Context compacted")
+
             code = self._call_llm(repl, round_num, logger)
             if code is None:
                 continue
