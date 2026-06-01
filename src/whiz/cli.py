@@ -116,12 +116,21 @@ def main(ctx, profile_flag, verbose, quiet):
     ctx.obj["quiet"] = quiet
 
     if ctx.invoked_subcommand is None:
+        # Default: enter interactive mode
+        import asyncio
+        from whiz.agent.interactive import InteractiveSession
         config = load_config()
         active = resolve_profile(config, profile_flag=profile_flag)
-        click.echo(f"Whiz v0.1.0 [{active.name}]")
-        click.echo("Usage: whiz run <prompt>")
-        click.echo("       whiz interactive <prompt>")
-        click.echo("       whiz --help")
+        model = _build_model(active)
+        session = InteractiveSession(
+            model=model,
+            project_root=Path.cwd(),
+            max_rounds=active.max_repl_rounds,
+            max_recursion_depth=active.max_depth,
+            verbose=verbose,
+        )
+        result = asyncio.run(session.run(""))
+        sys.exit(0 if result.success else 1)
 
 
 # --- run command ---
