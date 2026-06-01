@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import ast
-import signal
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,6 +12,35 @@ from whiz.repl.core import LocalREPL
 from whiz.tools.search import SearchTool
 from whiz.tools.filesystem import ReadFilesTool, EditFileTool, RunTestsTool
 from whiz.logging.trajectory import TrajectoryLogger
+from whiz.agent.recursion import create_sub_llm_callable
+
+
+class RecursionError(Exception):
+    """Raised when max recursion depth is exceeded."""
+    pass
+
+
+@dataclass
+class SubLLMManager:
+    """Tracks recursion depth across parent-child session trees."""
+    max_depth: int = 5
+    _depth: int = field(default=0, init=False, repr=False)
+
+    @property
+    def current_depth(self) -> int:
+        return self._depth
+
+    def enter(self) -> None:
+        if self._depth >= self.max_depth:
+            raise RecursionError(
+                f"Max recursion depth ({self.max_depth}) exceeded. "
+                f"Current depth: {self._depth}"
+            )
+        self._depth += 1
+
+    def exit(self) -> None:
+        if self._depth > 0:
+            self._depth -= 1
 
 
 SYSTEM_PROMPT = """You are Whiz, an AI coding agent with access to a Python REPL environment.
@@ -67,6 +94,8 @@ class Orchestrator:
         round_timeout: int = 60,
         verbose: bool = False,
         log_dir: Path | None = None,
+        max_recursion_depth: int = 5,
+        sub_model: str | None = None,
     ):
         self.model = model
         self.project_root = Path(project_root).resolve()
@@ -74,7 +103,10 @@ class Orchestrator:
         self.round_timeout = round_timeout
         self.verbose = verbose
         self.log_dir = log_dir
+        self.max_recursion_depth = max_recursion_depth
+        self.sub_model = sub_model
         self._trajectory: list[SessionEvent] = []
+        self._recursion_mgr = SubLLMManager(max_depth=max_recursion_depth)
 
     def run(self, prompt: str) -> SessionResult:
         """Run a complete session for the given prompt."""
@@ -158,21 +190,17 @@ class Orchestrator:
 
     def _inject_tools(self, repl: LocalREPL) -> None:
         """Inject tool callables into the REPL namespace."""
-        # Complete function: sets a flag and value in the namespace
         def complete(value):
             repl._namespace["_done"] = True
             repl._namespace["_done_value"] = value
             return value
 
-        # Sub-LLM: spawn a child session (simplified -- no recursion yet)
-        def sub_llm(prompt: str, context: str = "") -> str:
-            # Simplified implementation: just call the model directly
-            messages = [
-                {"role": "system", "content": "You are a sub-LLM. Complete the task concisely."},
-                {"role": "user", "content": f"Context: {context}\n\nTask: {prompt}"},
-            ]
-            response = self.model.chat_completion(messages, model="")
-            return response.content
+        sub_llm = create_sub_llm_callable(
+            model=self.model,
+            project_root=self.project_root,
+            recursion_mgr=self._recursion_mgr,
+            max_rounds=min(self.max_rounds, 50),
+        )
 
         search_tool = SearchTool(project_root=self.project_root)
         read_tool = ReadFilesTool(project_root=self.project_root)
