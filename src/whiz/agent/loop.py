@@ -1,68 +1,23 @@
 """Orchestrator: the outer agent loop that drives RLM sessions."""
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from whiz.context.indexer import CodebaseIndex
-from whiz.models.base import BaseModel, LLMResponse
+from whiz.models.base import BaseModel
 from whiz.repl.core import LocalREPL
-from whiz.tools.search import SearchTool
-from whiz.tools.filesystem import ReadFilesTool, EditFileTool, RunTestsTool
 from whiz.logging.trajectory import TrajectoryLogger
-from whiz.agent.recursion import create_sub_llm_callable
-from whiz.agent.compaction import Compactor, CompactionTrigger
+from whiz.agent.code_extraction import extract_code
+from whiz.agent.tools import inject_tools
+from whiz.agent.loop_base import SubLLMManager, RecursionError
 
 
-class RecursionError(Exception):
-    """Raised when max recursion depth is exceeded."""
-    pass
-
-
-@dataclass
-class SubLLMManager:
-    """Tracks recursion depth across parent-child session trees."""
-    max_depth: int = 5
-    _depth: int = field(default=0, init=False, repr=False)
-
-    @property
-    def current_depth(self) -> int:
-        return self._depth
-
-    def enter(self) -> None:
-        if self._depth >= self.max_depth:
-            raise RecursionError(
-                f"Max recursion depth ({self.max_depth}) exceeded. "
-                f"Current depth: {self._depth}"
-            )
-        self._depth += 1
-
-    def exit(self) -> None:
-        if self._depth > 0:
-            self._depth -= 1
-
-
-SYSTEM_PROMPT = """You are Whiz, a coding agent with a Python REPL.
-
-RULE: ALWAYS call complete(your_answer) when done. If the task is simple, just call complete() directly.
-
-Tools available as Python variables:
-- search(query) — grep the codebase
-- read_files([paths]) — read file contents
-- edit_file(path, content) — write a file
-- run_tests([cmd]) — run pytest
-- sub_llm(prompt, context="") — spawn child LLM
-- complete(value) — END the session and return value
-
-Variables already set: file_tree, readme, project_root, user_prompt
-
-Write Python code. End every response with complete(result)."""
-
-COMPLETE_FALLBACK_PROMPT = """You are Whiz. Given this REPL history, the task is complete.
-
-Write: complete("<your final answer here>")"""
+SYSTEM_PROMPT = """You are Whiz. Answer the user's task.
+Available Python tools: search(), read_files(), edit_file(), run_tests(), sub_llm()
+When done, call complete("your answer").
+Reply with:"""
 
 
 @dataclass
@@ -118,21 +73,23 @@ class Orchestrator:
         self._trajectory = []
         logger = TrajectoryLogger(log_dir=self.log_dir, verbose=self.verbose)
 
-        # Build index
         index = CodebaseIndex.from_root(self.project_root)
 
-        # Create REPL and inject tools + context
         repl = LocalREPL(max_output_lines=100)
         self._inject_context(repl, index, prompt)
-        self._inject_tools(repl)
+        inject_tools(
+            repl=repl,
+            model=self.model,
+            project_root=self.project_root,
+            recursion_mgr=self._recursion_mgr,
+            max_rounds=self.max_rounds,
+        )
 
-        # Create compaction infrastructure
+        from whiz.agent.compaction import CompactionTrigger, Compactor
         compaction_trigger = CompactionTrigger(threshold=self.compaction_threshold)
         compactor = Compactor(model=self.model)
 
-        # Inner loop
         for round_num in range(1, self.max_rounds + 1):
-            # Check if compaction is needed before this round
             if compaction_trigger.should_compact(repl):
                 compactor.compact(repl)
                 logger.log(round_num, "compaction", "Context compacted")
@@ -143,19 +100,15 @@ class Orchestrator:
 
             logger.log(round_num, "code", code, verbose_only=True)
 
-            # Execute in REPL
             raw_output = repl.exec_code(code)
 
-            # Check for REPL error
             has_error = False
             error_msg = None
-            output = raw_output
             try:
                 entry = repl.history[-1]
                 if entry.has_error:
                     has_error = True
                     error_msg = entry.error
-                    output = entry.error
             except IndexError:
                 pass
 
@@ -170,18 +123,14 @@ class Orchestrator:
             if has_error:
                 logger.log(round_num, "error", error_msg if error_msg else "unknown error", verbose_only=True)
             else:
-                logger.log(round_num, "output", output, verbose_only=True)
+                logger.log(round_num, "output", raw_output, verbose_only=True)
 
-            # Check for completion
             ns = repl.get_namespace()
             if "_done" in ns:
                 value = ns.get("_done_value")
                 logger.log(round_num, "complete", str(value))
-
-                # Auto-commit: create git commit after session
                 if self.auto_commit:
                     self._auto_commit(value)
-
                 logger.save()
                 return SessionResult(
                     success=True,
@@ -190,7 +139,6 @@ class Orchestrator:
                     trajectory=list(self._trajectory),
                 )
 
-        # Max rounds exceeded
         logger.save()
         return SessionResult(
             success=False,
@@ -201,26 +149,16 @@ class Orchestrator:
         )
 
     def _auto_commit(self, value: Any) -> None:
-        """Create a git commit with an LLM-generated message."""
+        """Create a git commit. Uses a simple message, no extra LLM call."""
         import subprocess
         try:
-            # Stage all changes
             subprocess.run(
                 ["git", "add", "-A"],
                 cwd=str(self.project_root),
                 capture_output=True,
                 timeout=30,
             )
-            # Generate commit message
-            try:
-                msg_response = self.model.chat_completion(
-                    messages=[{"role": "user", "content": f"Generate a concise git commit message (under 72 chars) for a session that produced: {value}"}],
-                    model="",
-                )
-                commit_msg = msg_response.content.strip()
-            except Exception:
-                commit_msg = f"Whiz session: {str(value)[:60]}"
-
+            commit_msg = f"Whiz: {str(value)[:72]}"
             subprocess.run(
                 ["git", "commit", "-m", commit_msg],
                 cwd=str(self.project_root),
@@ -237,44 +175,15 @@ class Orchestrator:
         for name, value in variables.items():
             repl._namespace[name] = value
 
-    def _inject_tools(self, repl: LocalREPL) -> None:
-        """Inject tool callables into the REPL namespace."""
-        def complete(value):
-            repl._namespace["_done"] = True
-            repl._namespace["_done_value"] = value
-            return value
-
-        sub_llm = create_sub_llm_callable(
-            model=self.model,
-            project_root=self.project_root,
-            recursion_mgr=self._recursion_mgr,
-            max_rounds=min(self.max_rounds, 50),
-        )
-
-        search_tool = SearchTool(project_root=self.project_root)
-        read_tool = ReadFilesTool(project_root=self.project_root)
-        edit_tool = EditFileTool(project_root=self.project_root)
-        run_tests_tool = RunTestsTool(project_root=self.project_root)
-
-        repl._namespace["search"] = search_tool.search
-        repl._namespace["read_files"] = read_tool.read_files
-        repl._namespace["edit_file"] = edit_tool.edit_file
-        repl._namespace["run_tests"] = run_tests_tool.run_tests
-        repl._namespace["sub_llm"] = sub_llm
-        repl._namespace["complete"] = complete
-
     def _call_llm(self, repl: LocalREPL, round_num: int, logger: TrajectoryLogger) -> str | None:
-        """Build messages and call the LLM. Returns code to execute, or None to skip."""
+        """Build messages and call the LLM. Returns code to execute, or None."""
         messages = self._build_messages(repl)
         response = self.model.chat_completion(messages, model="")
-        code = self._extract_code(response.content)
-        return code
+        return extract_code(response.content)
 
     def _build_messages(self, repl: LocalREPL) -> list[dict[str, str]]:
         """Build the message list for the LLM from REPL history."""
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
-        # Add history as alternating assistant/user turns
         for entry in repl.history:
             if entry.code.strip():
                 messages.append({"role": "assistant", "content": entry.code})
@@ -283,55 +192,4 @@ class Orchestrator:
                 output = f"Error: {entry.error}"
             if output.strip():
                 messages.append({"role": "user", "content": output})
-
         return messages
-
-    def _extract_code(self, content: str) -> str | None:
-        """Extract executable Python code from the LLM response.
-
-        If the response is plain text (not valid Python), wrap it in complete()
-        so the session terminates with the model's answer.
-        """
-        content = content.strip()
-        if not content:
-            return None
-
-        # If the response is wrapped in markdown code blocks, extract from them
-        if "```" in content:
-            blocks = []
-            in_block = False
-            block_lines = []
-            for line in content.split("\n"):
-                if line.strip().startswith("```"):
-                    if in_block:
-                        blocks.append("\n".join(block_lines))
-                        block_lines = []
-                        in_block = False
-                    else:
-                        in_block = True
-                elif in_block:
-                    block_lines.append(line)
-            if blocks:
-                return blocks[-1].strip()
-
-        # Check if the whole response is valid Python
-        try:
-            compile(content, "<llm>", "exec")
-            return content
-        except SyntaxError:
-            pass
-
-        # Try to find a Python-like line
-        for line in content.split("\n"):
-            line = line.strip()
-            if line and not line.startswith("#"):
-                try:
-                    compile(line, "<llm>", "exec")
-                    return line
-                except SyntaxError:
-                    continue
-
-        # Plain text answer -- wrap in complete() so the session ends
-        # Escape quotes in the answer
-        escaped = content.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-        return f'complete("{escaped[:500]}")'

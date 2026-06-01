@@ -2,7 +2,8 @@
 import pytest
 from pathlib import Path
 
-from whiz.agent.loop import Orchestrator, SubLLMManager, RecursionError
+from whiz.agent.loop import Orchestrator, SessionResult, SessionEvent
+from whiz.agent.loop_base import SubLLMManager, RecursionError
 from tests.mocks.llm import MockLLM
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from whiz.agent.loop import Orchestrator, SessionResult
+from whiz.agent.loop_base import RecursionError
 from tests.mocks.llm import MockLLM
 
 

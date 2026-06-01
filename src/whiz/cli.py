@@ -37,12 +37,8 @@ def _build_model(profile):
         from whiz.models.openai import OpenAIModel
         return OpenAIModel(model=model_name, api_key=api_key or None)
     elif backend == "anthropic":
-        try:
-            from whiz.models.anthropic import AnthropicModel
-            return AnthropicModel(model=model_name, api_key=api_key or None)
-        except RuntimeError:
-            from whiz.models.openai import OpenAIModel
-            return OpenAIModel(model=model_name, api_key=api_key or None)
+        from whiz.models.anthropic import AnthropicModel
+        return AnthropicModel(model=model_name, api_key=api_key or None)
     elif backend == "openrouter":
         from whiz.models.openai import OpenAIModel
         return OpenAIModel(
