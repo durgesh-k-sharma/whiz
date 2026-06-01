@@ -99,10 +99,11 @@ Create a config file at `~/.whiz/config.yaml`:
 
 ```yaml
 profiles:
+  # OpenRouter free-tier (no cost)
   or-free:
     backend: openrouter
-    model: openrouter/free
-    sub_model: openrouter/free
+    model: openrouter/qwen/qwen-2.5-7b-instruct:free
+    sub_model: openrouter/qwen/qwen-2.5-7b-instruct:free
     recursion:
       max_depth: 3
       max_repl_rounds: 50

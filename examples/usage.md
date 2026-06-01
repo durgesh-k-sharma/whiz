@@ -92,4 +92,6 @@ whiz run "your task"
 # Specific model via OpenRouter
 whiz run --profile or-claude "complex reasoning task"
 whiz run --profile or-gpt4o "another task"
+
+# List available free models at https://openrouter.ai/models?price=free
 ```
